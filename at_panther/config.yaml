@@ -1,5 +1,5 @@
 name: AT-Panther (ALDI Talk)
-version: "1.0.2"
+version: "1.0.3"
 slug: at_panther
 description: >-
   Überwacht das ALDI-Talk-Datenvolumen und bucht bei < 1 GB automatisch

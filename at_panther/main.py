@@ -296,7 +296,16 @@ def login_and_check_data():
                     try:
                         button = data_meter.query_selector('one-button[slot="action"]')
                         if button and button.is_visible() and "1 GB" in (button.text_content() or ""):
-                            button.click()
+                            # Usercentrics-Overlay fängt sonst die Pointer-Events ab
+                            try:
+                                page.evaluate("document.getElementById('usercentrics-root')?.remove()")
+                            except Exception:
+                                pass
+                            try:
+                                button.click(timeout=10000)
+                            except Exception as click_err:
+                                logging.warning(f"Normaler Klick blockiert ({click_err}) – dispatch_event ...")
+                                button.dispatch_event("click")
                             logging.info("Nachbuchung über Inland-Meter-Button.")
                             send_telegram_message(f"{RUFNUMMER}: {GB:.2f} GB übrig – 1 GB nachgebucht. 📲")
                             clicked = True
