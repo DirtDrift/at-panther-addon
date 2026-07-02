@@ -306,8 +306,7 @@ def login_and_check_data():
                             except Exception as click_err:
                                 logging.warning(f"Normaler Klick blockiert ({click_err}) – dispatch_event ...")
                                 button.dispatch_event("click")
-                            logging.info("Nachbuchung über Inland-Meter-Button.")
-                            send_telegram_message(f"{RUFNUMMER}: {GB:.2f} GB übrig – 1 GB nachgebucht. 📲")
+                            logging.info("1-GB-Button geklickt – warte auf Bestätigung ...")
                             clicked = True
                     except Exception as e:
                         logging.warning(f"Fehler beim Klicken: {e}")
@@ -323,8 +322,7 @@ def login_and_check_data():
                                     text = (btn.text_content() or "").strip()
                                     if "1 GB" in text:
                                         btn.click()
-                                        logging.info("Nachbuchung per Fallback erfolgt.")
-                                        send_telegram_message(f"{RUFNUMMER}: {GB:.2f} GB übrig – 1 GB per Fallback nachgebucht. 📲")
+                                        logging.info("1-GB-Button per Fallback geklickt – warte auf Bestätigung ...")
                                         clicked = True
                                         break
                                 except Exception:
@@ -334,6 +332,28 @@ def login_and_check_data():
 
                     if not clicked:
                         raise Exception("Kein gültiger '1 GB' Button gefunden – Nachbuchung fehlgeschlagen.")
+
+                    # Buchung verifizieren: Der Klick feuert einen Request im
+                    # Hintergrund; Browser sofort schließen würde ihn killen.
+                    # Also warten, neu laden und prüfen, ob das Volumen steigt.
+                    verified = False
+                    for wait_s in (10, 20, 30):
+                        time.sleep(wait_s)
+                        try:
+                            page.reload(wait_until="domcontentloaded")
+                            time.sleep(4)
+                            new_gb, _ = get_datenvolumen(page)
+                            if new_gb > GB + 0.5:
+                                logging.info(f"Nachbuchung bestätigt: {GB:.2f} GB -> {new_gb:.2f} GB ✅")
+                                send_telegram_message(f"{RUFNUMMER}: {GB:.2f} GB übrig – 1 GB nachgebucht (jetzt {new_gb:.2f} GB). 📲")
+                                LAST_GB = new_gb
+                                verified = True
+                                break
+                            logging.info(f"Volumen noch {new_gb:.2f} GB – warte weiter auf Bestätigung ...")
+                        except Exception as e:
+                            logging.warning(f"Verifikation fehlgeschlagen: {e}")
+                    if not verified:
+                        raise Exception(f"Klick ausgeführt, aber Volumen weiterhin {GB:.2f} GB – Nachbuchung NICHT bestätigt.")
                 else:
                     logging.info(f"Aktuelles Datenvolumen: {GB:.2f} GB")
                     send_telegram_message(f"{RUFNUMMER}: Noch {GB:.2f} GB übrig. Nächster Run in {interval} s. ✅")
