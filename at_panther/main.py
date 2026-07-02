@@ -164,72 +164,31 @@ def wait_and_handle_cookies(page, state="domcontentloaded", sleep_after=0):
     handle_cookie_banner(page)
 
 def get_datenvolumen(page):
+    """Portal-Update 2026: Statt fragiler nth-child-Selektoren wird das
+    Inland-Datenvolumen-Meter über sein Footer-Label gesucht. Gibt (GB, meter)
+    zurück; meter ist das one-usage-meter-Element (für den Nachbuch-Button)."""
     logging.info("Lese Datenvolumen aus ...")
-    try:
-        label_selectors = [
-            'one-stack.usage-meter:nth-child(1) > one-usage-meter:nth-child(1) > one-button:nth-child(2)',
-            'one-stack.usage-meter:nth-child(1) > one-stack:nth-child(1) > one-usage-meter:nth-child(1) > one-button:nth-child(2)',
-        ]
-        label_text = ""
-        is_community_plus = False
-        for sel in label_selectors:
-            try:
-                element = page.query_selector(sel)
-                if element:
-                    label_text = (element.text_content() or "").strip()
-                if label_text:
-                    break
-            except Exception:
-                pass
-
-        if "Inland & EU" in label_text:
-            is_community_plus = True
-            logging.info("Community+ erkannt")
-            GB_selectors = [
-                'one-stack.usage-meter:nth-child(2) > one-usage-meter:nth-child(1) > one-group:nth-child(1) > one-heading:nth-child(2)',
-                'one-stack.usage-meter:nth-child(2) > one-stack:nth-child(1) > one-usage-meter:nth-child(1) > one-group:nth-child(1) > one-heading:nth-child(2)',
-            ]
-        else:
-            logging.info("Kein Community+")
-            GB_selectors = [
-                'one-stack.usage-meter:nth-child(1) > one-usage-meter:nth-child(1) > one-group:nth-child(1) > one-heading:nth-child(2)',
-                'one-stack.usage-meter:nth-child(1) > one-stack:nth-child(1) > one-usage-meter:nth-child(1) > one-group:nth-child(1) > one-heading:nth-child(2)',
-            ]
-    except Exception as e:
-        logging.warning(f"Fehler bei Community+-Erkennung: {e}")
-        is_community_plus = False
-        GB_selectors = [
-            'one-stack.usage-meter:nth-child(1) > one-usage-meter:nth-child(1) > one-group:nth-child(1) > one-heading:nth-child(2)',
-            'one-stack.usage-meter:nth-child(1) > one-stack:nth-child(1) > one-usage-meter:nth-child(1) > one-group:nth-child(1) > one-heading:nth-child(2)',
-        ]
-
-    GB_text_raw = None
-    for sel in GB_selectors:
+    page.wait_for_selector("one-usage-meter", timeout=15000)
+    for meter in page.query_selector_all("one-usage-meter"):
         try:
-            element = page.query_selector(sel)
-            if element:
-                GB_text_raw = element.text_content()
-            if GB_text_raw:
-                break
+            footer = meter.query_selector('one-button[slot="footer"]')
+            label = (footer.text_content() or "").strip() if footer else ""
+            if "Roaming" in label or not label.startswith("Inland"):
+                continue
+            heading = meter.query_selector("one-heading")
+            heading_text = (heading.text_content() or "").strip() if heading else ""
+            match = re.search(r"([\d\.,]+)\s?(GB|MB)", heading_text)
+            if not match:
+                continue
+            value, unit = match.groups()
+            value = float(value.replace(",", "."))
+            GB = value / 1024.0 if unit == "MB" else value
+            logging.info(f"Inland-Meter gefunden (Label '{label}'): {heading_text}")
+            return GB, meter
         except Exception as e:
-            logging.warning(f"Selector {sel} nicht verfügbar: {e}")
-            continue
+            logging.warning(f"Usage-Meter nicht lesbar: {e}")
 
-    if not GB_text_raw:
-        raise Exception("Konnte das Datenvolumen nicht auslesen – kein gültiger Selector gefunden.")
-
-    match = re.search(r"([\d\.,]+)\s?(GB|MB)", GB_text_raw)
-    if not match:
-        raise ValueError(f"Unerwartetes Format beim Datenvolumen: {GB_text_raw}")
-
-    value, unit = match.groups()
-    value = value.replace(",", ".")
-    if unit == "MB":
-        GB = float(value) / 1024.0
-    else:
-        GB = float(value)
-
-    return GB, is_community_plus
+    raise Exception("Konnte das Datenvolumen nicht auslesen – kein gültiger Selector gefunden.")
 
 def login_and_check_data():
     global LAST_GB
@@ -319,7 +278,7 @@ def login_and_check_data():
                 context.storage_state(path=COOKIE_FILE)
 
                 # Datenvolumen lesen
-                GB, is_community_plus = get_datenvolumen(page)
+                GB, data_meter = get_datenvolumen(page)
                 LAST_GB = GB
                 try:
                     with open(STATE_FILE, "w") as f:
@@ -332,36 +291,17 @@ def login_and_check_data():
                 # Nachbuchen, wenn < 1 GB
                 if GB < 1.0:
                     logging.info("Weniger als 1 GB – versuche, 1 GB nachzubuchen ...")
-                    if is_community_plus:
-                        selectors = [
-                            'one-stack.usage-meter:nth-child(2) > one-usage-meter:nth-child(1) > one-button:nth-child(3)',
-                            'one-stack.usage-meter:nth-child(2) > one-stack:nth-child(1) > one-usage-meter:nth-child(1) > one-button:nth-child(3)',
-                        ]
-                    else:
-                        selectors = [
-                            'one-stack.usage-meter:nth-child(1) > one-usage-meter:nth-child(1) > one-button:nth-child(3)',
-                            'one-stack.usage-meter:nth-child(1) > one-stack:nth-child(1) > one-usage-meter:nth-child(1) > one-button:nth-child(3)',
-                        ]
-
                     clicked = False
-                    # Direkte Selektoren
-                    for selector in selectors:
-                        try:
-                            elements = page.query_selector_all(selector)
-                            for button in elements:
-                                if not button or not button.is_visible():
-                                    continue
-                                text = (button.text_content() or "").strip()
-                                if "1 GB" in text:
-                                    if wait_and_click(page, selector):
-                                        logging.info(f"Nachbuchung über Selector: {selector}")
-                                        send_telegram_message(f"{RUFNUMMER}: {GB:.2f} GB übrig – 1 GB nachgebucht. 📲")
-                                        clicked = True
-                                        break
-                            if clicked:
-                                break
-                        except Exception as e:
-                            logging.warning(f"Fehler beim Klicken: {e}")
+                    # Action-Button direkt im gefundenen Inland-Meter
+                    try:
+                        button = data_meter.query_selector('one-button[slot="action"]')
+                        if button and button.is_visible() and "1 GB" in (button.text_content() or ""):
+                            button.click()
+                            logging.info("Nachbuchung über Inland-Meter-Button.")
+                            send_telegram_message(f"{RUFNUMMER}: {GB:.2f} GB übrig – 1 GB nachgebucht. 📲")
+                            clicked = True
+                    except Exception as e:
+                        logging.warning(f"Fehler beim Klicken: {e}")
 
                     # Fallback – alle Buttons durchsuchen
                     if not clicked:
