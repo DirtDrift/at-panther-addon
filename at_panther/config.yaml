@@ -1,0 +1,31 @@
+name: AT-Panther (ALDI Talk)
+version: "1.0.0"
+slug: at_panther
+description: >-
+  Überwacht das ALDI-Talk-Datenvolumen und bucht bei < 1 GB automatisch
+  1 GB nach (Wrapper um registry.gitlab.com/docker_point/at-panther).
+url: https://gitlab.com/docker_point/at-panther
+arch:
+  - amd64
+  - aarch64
+startup: application
+boot: auto
+init: false
+options:
+  rufnummer: ""
+  passwort: ""
+  telegram: false
+  bot_token: ""
+  chat_id: ""
+  sleep_mode: smart
+  sleep_interval: 90
+  browser: chromium
+schema:
+  rufnummer: str
+  passwort: password
+  telegram: bool
+  bot_token: str?
+  chat_id: str?
+  sleep_mode: str
+  sleep_interval: int
+  browser: list(chromium|firefox|webkit)
